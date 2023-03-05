@@ -1,0 +1,7 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: "Include acme.openvpn_test_role"
+      include_role:
+        name: "acme.openvpn_test_role"

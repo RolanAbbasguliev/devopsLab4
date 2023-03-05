@@ -1,0 +1,48 @@
+---
+- name: "Install docker"
+  hosts: "app"
+  become: true
+  roles:
+    - docker
+
+
+- name: "Install nginx"
+  hosts: "app"
+  become: true
+  roles: 
+    - nginx
+
+- name: "Install OpenVPN to Servers Hosts"
+  hosts: "server"
+  roles: 
+    - openvpn_test_role
+
+- name: "Install OpenVPN to Clients Hosts"
+  hosts: "client"
+
+  tasks: 
+  - name: "Install OpenVPN"
+    become: true
+    apt: 
+      name:
+        - openvpn
+      state: "present"
+      update_cache: "yes"
+
+  - name: "Cope client config"
+    copy: 
+      src: "{{ playbook_dir }}/ovpn-client-conf/server1-client1.ovpn"
+      dest: "/home/"
+
+  post_tasks: 
+  - name: "Run Django application"
+    docker_container: 
+      name: django-app
+      image: timurbabs/django:latest
+      state: started
+      ports: 
+        - "8080:8000"
+      volumes:
+        - "/data/static:/app/staticfiles"
+
+

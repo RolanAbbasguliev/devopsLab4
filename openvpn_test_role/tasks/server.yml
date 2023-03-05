@@ -1,0 +1,134 @@
+---
+- name: Install dependencies
+  apt:
+    name:
+      - openvpn
+      - easy-rsa
+      - iptables-persistent
+    state: present
+    update_cache: yes
+
+- name: Set ipv4 forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes
+    ignoreerrors: true
+  failed_when: false
+
+- name: Masquerade!
+  iptables:
+    table: nat
+    chain: POSTROUTING
+    jump: MASQUERADE
+    source: '0.0.0.0/0'
+    destination: '0.0.0.0/0'
+    protocol: 'all'
+  ignore_errors: yes
+
+- name: "Check if rsa dir exists"
+  file:
+    path: "{{ openvpn_dir }}/easy-rsa"
+    state: directory
+    mode: "0755"
+
+- name: Init vars
+  copy:
+    dest: "{{ openvpn_easyrsa_dir }}/vars"
+    content: |
+      set_var EASYRSA_ALGO "ec"
+      set_var EASYRSA_DIGEST "sha512"
+    mode: "0644"
+
+- name: Easy-rsa init-pki
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa init-pki"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki"
+
+- name: Easy-rsa build-ca
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa build-ca nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/ca.crt"
+  environment:
+    EASYRSA_BATCH: "yes"
+
+- name: Easy-rsa gen-dh
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa gen-dh"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/dh.pem"
+
+- name: Easy-rsa build-server-full server nopass
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa build-server-full server nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/issued/server.crt"
+
+- name: Easy-rsa build clients
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa build-client-full {{ item }} nopass"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/issued/{{ item }}.crt"
+  with_items:
+    - "{{ openvpn_clients }}"
+
+- name: Easy-rsa generate crl
+  command:
+    cmd: "{{ openvpn_easyrsa_dir }}/easyrsa gen-crl"
+    chdir: "{{ openvpn_dir }}/easy-rsa"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/crl.pem"
+
+- name: "OpenVPN --genkey --secret ta.key"
+  command:
+    cmd: "openvpn --genkey --secret {{ openvpn_dir }}/easy-rsa/pki/ta.key"
+    creates: "{{ openvpn_dir }}/easy-rsa/pki/ta.key"
+
+- name: "Copy files to server dir"
+  copy:
+    src: "{{ openvpn_dir }}/easy-rsa/pki/{{ item }}"
+    dest: "{{ openvpn_dir }}/server/{{ item | basename }}"
+    mode: "0640"
+    remote_src: yes
+  loop:
+    - ca.crt
+    - dh.pem
+    - ta.key
+    - private/ca.key
+    - private/server.key
+    - issued/server.crt
+
+- name: "Copy files to {{ openvpn_dir }}"
+  copy:
+    src: "{{ openvpn_dir }}/easy-rsa/pki/{{ item }}"
+    dest: "{{ openvpn_dir }}/{{ item | basename }}"
+    mode: "0640"
+    remote_src: yes
+  loop:
+    - ca.crt
+    - ta.key
+
+- name: "Check if config dir exists"
+  file:
+    path: "{{ openvpn_dir }}/{{ openvpn_client_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Set server.conf
+  template:
+    src: server.conf.j2
+    dest: "{{ openvpn_dir }}/server.conf"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Restart OpenVPN
+  service:
+      name: "{{ openvpn_service_name }}"
+      state: restarted
+  
+
